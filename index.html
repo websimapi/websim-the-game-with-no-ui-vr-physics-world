@@ -12,7 +12,8 @@
     {
         "imports": {
             "three": "https://cdn.jsdelivr.net/npm/three@0.155.0/build/three.module.js",
-            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.155.0/examples/jsm/"
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.155.0/examples/jsm/",
+            "cannon": "https://cdn.jsdelivr.net/npm/cannon@0.20.0/build/cannon-es.js"
         }
     }
     </script>
@@ -96,9 +97,11 @@
         import { VRButton } from 'three/addons/webxr/VRButton.js';
         import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
         import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
+        import * as CANNON from 'cannon';
         
-        // Make THREE available globally for compatibility
+        // Make THREE and CANNON available globally for compatibility
         window.THREE = THREE;
+        window.CANNON = CANNON;
         
         class VRPhysicsGame {
             constructor() {
