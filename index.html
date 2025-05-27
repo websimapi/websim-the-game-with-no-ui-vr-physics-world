@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Game with No UI - VR Physics World</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r155/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/cannon@0.20.0/build/cannon.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.155.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.155.0/examples/js/utils/BufferGeometryUtils.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            color: #fff;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+        }
+        
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 100;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+        }
+        
+        #crafting-modal {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.9);
+            padding: 20px;
+            border-radius: 10px;
+            display: none;
+            z-index: 200;
+            max-width: 400px;
+        }
+        
+        #crafting-input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            background: rgba(255,255,255,0.1);
+            border: 1px solid #333;
+            color: white;
+            border-radius: 5px;
+        }
+        
+        #craft-button, #cancel-button {
+            padding: 10px 20px;
+            margin: 5px;
+            background: #007acc;
+            border: none;
+            color: white;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        
+        #cancel-button {
+            background: #666;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <h3>The Game with No UI - VR Physics World</h3>
+        <p>Enter VR to begin. Grab objects, craft with voice commands, build your world.</p>
+        <p>Press 'C' to craft items (desktop mode)</p>
+        <p>Players online: <span id="player-count">0</span></p>
+    </div>
+    
+    <div id="crafting-modal">
+        <h3>Craft New Item</h3>
+        <p>Describe what you want to create:</p>
+        <input type="text" id="crafting-input" placeholder="e.g., 'a glowing sword' or 'a wooden hammer'">
+        <br>
+        <button id="craft-button">Create</button>
+        <button id="cancel-button">Cancel</button>
+    </div>
+    
+    <script type="module">
+        import { VRButton } from 'https://cdn.jsdelivr.net/npm/three@0.155.0/examples/jsm/webxr/VRButton.js';
+        import { XRControllerModelFactory } from 'https://cdn.jsdelivr.net/npm/three@0.155.0/examples/jsm/webxr/XRControllerModelFactory.js';
+        import { XRHandModelFactory } from 'https://cdn.jsdelivr.net/npm/three@0.155.0/examples/jsm/webxr/XRHandModelFactory.js';
+        
+        class VRPhysicsGame {
+            constructor() {
+                this.scene = null;
+                this.camera = null;
+                this.renderer = null;
+                this.world = null;
+                this.room = null;
+                
+                this.controllers = [];
+                this.hands = [];
+                this.grabbedObjects = new Map();
+                this.toolbelt = [];
+                this.worldObjects = new Map();
+                
+                this.init();
+            }
+            
+            async init() {
+                await this.setupMultiplayer();
+                this.setupPhysics();
+                this.setupRenderer();
+                this.setupScene();
+                this.setupVR();
+                this.setupControls();
+                this.setupToolbelt();
+                this.loadWorldState();
+                this.animate();
+            }
+            
+            async setupMultiplayer() {
+                this.room = new WebsimSocket();
+                await this.room.initialize();
+                
+                // Subscribe to world state changes
+                this.room.subscribeRoomState((roomState) => {
+                    this.syncWorldState(roomState);
+                });
+                
+                // Subscribe to player presence
+                this.room.subscribePresence((presence) => {
+                    this.updatePlayerCount();
+                    this.syncPlayers(presence);
+                });
+                
+                // Handle crafting requests
+                this.room.subscribePresenceUpdateRequests((request, fromClientId) => {
+                    if (request.type === 'craft_item') {
+                        this.handleCraftingRequest(request, fromClientId);
+                    }
+                });
+            }
+            
+            setupPhysics() {
+                this.world = new CANNON.World();
+                this.world.gravity.set(0, -9.82, 0);
+                this.world.broadphase = new CANNON.NaiveBroadphase();
+                this.world.solver.iterations = 10;
+            }
+            
+            setupRenderer() {
+                this.renderer = new THREE.WebGLRenderer({ antialias: true });
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.outputEncoding = THREE.sRGBEncoding;
+                this.renderer.shadowMap.enabled = true;
+                this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                this.renderer.xr.enabled = true;
+                document.body.appendChild(this.renderer.domElement);
+                
+                // Add VR button
+                document.body.appendChild(VRButton.createButton(this.renderer));
+            }
+            
+            setupScene() {
+                this.scene = new THREE.Scene();
+                this.scene.background = new THREE.Color(0x505050);
+                
+                this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+                this.camera.position.set(0, 1.6, 3);
+                
+                // Lighting
+                const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+                this.scene.add(ambientLight);
+                
+                const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+                directionalLight.position.set(10, 10, 5);
+                directionalLight.castShadow = true;
+                directionalLight.shadow.mapSize.width = 2048;
+                directionalLight.shadow.mapSize.height = 2048;
+                this.scene.add(directionalLight);
+                
+                // Ground
+                this.createGround();
+                
+                // Sample objects
+                this.createSampleObjects();
+            }
+            
+            createGround() {
+                const groundGeometry = new THREE.PlaneGeometry(50, 50);
+                const groundMaterial = new THREE.MeshLambertMaterial({ 
+                    color: 0x336633,
+                    transparent: true,
+                    opacity: 0.8
+                });
+                const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+                ground.rotation.x = -Math.PI / 2;
+                ground.receiveShadow = true;
+                this.scene.add(ground);
+                
+                // Physics ground
+                const groundShape = new CANNON.Plane();
+                const groundBody = new CANNON.Body({ mass: 0 });
+                groundBody.addShape(groundShape);
+                groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+                this.world.add(groundBody);
+            }
+            
+            createSampleObjects() {
+                // Create some basic grabbable objects
+                this.createCube(new THREE.Vector3(2, 2, 0), 0xff0000, 1);
+                this.createSphere(new THREE.Vector3(-2, 2, 0), 0x00ff00, 0.5);
+                this.createCube(new THREE.Vector3(0, 2, -2), 0x0000ff, 0.8);
+                
+                // Crafting anvil
+                this.createAnvil(new THREE.Vector3(0, 1, -5));
+            }
+            
+            createCube(position, color, size = 1) {
+                const geometry = new THREE.BoxGeometry(size, size, size);
+                const material = new THREE.MeshLambertMaterial({ color });
+                const mesh = new THREE.Mesh(geometry, material);
+                mesh.position.copy(position);
+                mesh.castShadow = true;
+                mesh.receiveShadow = true;
+                this.scene.add(mesh);
+                
+                // Physics
+                const shape = new CANNON.Sphere(size * 0.5);
+                const body = new CANNON.Body({ mass: size });
+                body.addShape(shape);
+                body.position.set(position.x, position.y, position.z);
+                this.world.add(body);
+                
+                mesh.userData = { body, grabbable: true, weight: size };
+                return mesh;
+            }
+            
+            createSphere(position, color, radius = 0.5) {
+                const geometry = new THREE.SphereGeometry(radius, 16, 12);
+                const material = new THREE.MeshLambertMaterial({ color });
+                const mesh = new THREE.Mesh(geometry, material);
+                mesh.position.copy(position);
+                mesh.castShadow = true;
+                mesh.receiveShadow = true;
+                this.scene.add(mesh);
+                
+                // Physics
+                const shape = new CANNON.Sphere(radius);
+                const body = new CANNON.Body({ mass: radius * 2 });
+                body.addShape(shape);
+                body.position.set(position.x, position.y, position.z);
+                this.world.add(body);
+                
+                mesh.userData = { body, grabbable: true, weight: radius * 2 };
+                return mesh;
+            }
+            
+            createAnvil(position) {
+                const group = new THREE.Group();
+                
+                // Base
+                const baseGeometry = new THREE.BoxGeometry(2, 0.5, 1);
+                const baseMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
+                const base = new THREE.Mesh(baseGeometry, baseMaterial);
+                base.position.y = 0.25;
+                group.add(base);
+                
+                // Top
+                const topGeometry = new THREE.BoxGeometry(1.5, 0.3, 0.8);
+                const top = new THREE.Mesh(topGeometry, baseMaterial);
+                top.position.y = 0.65;
+                group.add(top);
+                
+                group.position.copy(position);
+                group.userData = { isAnvil: true, grabbable: false };
+                this.scene.add(group);
+                
+                return group;
+            }
+            
+            setupVR() {
+                this.controllerModelFactory = new XRControllerModelFactory();
+                this.handModelFactory = new XRHandModelFactory();
+                
+                // Setup controllers
+                for (let i = 0; i < 2; i++) {
+                    const controller = this.renderer.xr.getController(i);
+                    controller.addEventListener('selectstart', (event) => this.onSelectStart(event, i));
+                    controller.addEventListener('selectend', (event) => this.onSelectEnd(event, i));
+                    controller.addEventListener('squeeze', (event) => this.onSqueeze(event, i));
+                    this.scene.add(controller);
+                    this.controllers[i] = controller;
+                    
+                    // Controller model
+                    const controllerGrip = this.renderer.xr.getControllerGrip(i);
+                    controllerGrip.add(this.controllerModelFactory.createControllerModel(controllerGrip));
+                    this.scene.add(controllerGrip);
+                    
+                    // Hand tracking
+                    const hand = this.renderer.xr.getHand(i);
+                    hand.add(this.handModelFactory.createHandModel(hand, 'mesh'));
+                    this.scene.add(hand);
+                    this.hands[i] = hand;
+                }
+            }
+            
+            setupControls() {
+                // Desktop fallback controls
+                document.addEventListener('keydown', (event) => {
+                    if (event.key === 'c' || event.key === 'C') {
+                        this.showCraftingModal();
+                    }
+                });
+                
+                // Crafting modal handlers
+                document.getElementById('craft-button').addEventListener('click', () => {
+                    this.craftItem();
+                });
+                
+                document.getElementById('cancel-button').addEventListener('click', () => {
+                    this.hideCraftingModal();
+                });
+            }
+            
+            setupToolbelt() {
+                // Create toolbelt around player
+                this.toolbeltRadius = 0.8;
+                this.toolbeltSlots = 8;
+                this.toolbeltItems = [];
+                
+                for (let i = 0; i < this.toolbeltSlots; i++) {
+                    const angle = (i / this.toolbeltSlots) * Math.PI * 2;
+                    const x = Math.cos(angle) * this.toolbeltRadius;
+                    const z = Math.sin(angle) * this.toolbeltRadius;
+                    
+                    // Visual slot indicator
+                    const slotGeometry = new THREE.RingGeometry(0.08, 0.1, 8);
+                    const slotMaterial = new THREE.MeshBasicMaterial({ 
+                        color: 0x444444, 
+                        side: THREE.DoubleSide,
+                        transparent: true,
+                        opacity: 0.5
+                    });
+                    const slot = new THREE.Mesh(slotGeometry, slotMaterial);
+                    slot.position.set(x, 1.2, z);
+                    slot.rotation.x = -Math.PI / 2;
+                    this.scene.add(slot);
+                    
+                    this.toolbeltItems[i] = { slot, item: null };
+                }
+            }
+            
+            onSelectStart(event, controllerIndex) {
+                const controller = this.controllers[controllerIndex];
+                const intersections = this.getIntersections(controller);
+                
+                if (intersections.length > 0) {
+                    const object = intersections[0].object;
+                    if (object.userData.grabbable) {
+                        this.grabObject(object, controller, controllerIndex);
+                    } else if (object.userData.isAnvil) {
+                        this.showCraftingModal();
+                    }
+                }
+            }
+            
+            onSelectEnd(event, controllerIndex) {
+                const controller = this.controllers[controllerIndex];
+                if (this.grabbedObjects.has(controllerIndex)) {
+                    this.releaseObject(controllerIndex);
+                }
+            }
+            
+            onSqueeze(event, controllerIndex) {
+                // Store item in toolbelt
+                if (this.grabbedObjects.has(controllerIndex)) {
+                    this.storeInToolbelt(controllerIndex);
+                }
+            }
+            
+            grabObject(object, controller, controllerIndex) {
+                if (object.userData.body) {
+                    object.userData.body.type = CANNON.Body.KINEMATIC;
+                }
+                
+                const attachment = new THREE.Group();
+                controller.add(attachment);
+                attachment.attach(object);
+                
+                this.grabbedObjects.set(controllerIndex, {
+                    object: object,
+                    attachment: attachment,
+                    originalParent: object.parent
+                });
+                
+                // Update player presence
+                this.room.updatePresence({
+                    grabbing: true,
+                    grabbedObject: object.userData.id || 'unknown'
+                });
+            }
+            
+            releaseObject(controllerIndex) {
+                const grabbed = this.grabbedObjects.get(controllerIndex);
+                if (!grabbed) return;
+                
+                const { object, attachment, originalParent } = grabbed;
+                
+                attachment.remove(object);
+                originalParent.add(object);
+                
+                if (object.userData.body) {
+                    object.userData.body.type = CANNON.Body.DYNAMIC;
+                    object.userData.body.position.copy(object.position);
+                    object.userData.body.quaternion.copy(object.quaternion);
+                }
+                
+                this.grabbedObjects.delete(controllerIndex);
+                
+                // Update player presence
+                this.room.updatePresence({
+                    grabbing: false,
+                    grabbedObject: null
+                });
+                
+                // Save object position to world state
+                this.saveObjectState(object);
+            }
+            
+            storeInToolbelt(controllerIndex) {
+                const grabbed = this.grabbedObjects.get(controllerIndex);
+                if (!grabbed) return;
+                
+                // Find empty toolbelt slot
+                for (let i = 0; i < this.toolbeltSlots; i++) {
+                    if (!this.toolbeltItems[i].item) {
+                        const { object } = grabbed;
+                        
+                        // Scale down and position in toolbelt
+                        object.scale.setScalar(0.3);
+                        object.position.copy(this.toolbeltItems[i].slot.position);
+                        object.position.y = 1.3;
+                        
+                        if (object.userData.body) {
+                            object.userData.body.type = CANNON.Body.KINEMATIC;
+                        }
+                        
+                        this.toolbeltItems[i].item = object;
+                        this.releaseObject(controllerIndex);
+                        break;
+                    }
+                }
+            }
+            
+            getIntersections(controller) {
+                const raycaster = new THREE.Raycaster();
+                const tempMatrix = new THREE.Matrix4();
+                
+                tempMatrix.identity().extractRotation(controller.matrixWorld);
+                raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+                raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+                
+                return raycaster.intersectObjects(this.scene.children, true);
+            }
+            
+            showCraftingModal() {
+                document.getElementById('crafting-modal').style.display = 'block';
+                document.getElementById('crafting-input').focus();
+            }
+            
+            hideCraftingModal() {
+                document.getElementById('crafting-modal').style.display = 'none';
+                document.getElementById('crafting-input').value = '';
+            }
+            
+            async craftItem() {
+                const description = document.getElementById('crafting-input').value.trim();
+                if (!description) return;
+                
+                this.hideCraftingModal();
+                
+                try {
+                    // Generate item design using AI
+                    const completion = await websim.chat.completions.create({
+                        messages: [
+                            {
+                                role: "system",
+                                content: `You are a 3D item generator for a VR physics game. Create detailed specifications for a 3D object based on the user's description.
+                                
+Respond with JSON only:
+{
+  "name": "item name",
+  "type": "basic_shape|complex", 
+  "geometry": "box|sphere|cylinder|custom",
+  "size": {"width": 1, "height": 1, "depth": 1},
+  "color": "#hexcolor",
+  "weight": 1.0,
+  "special_properties": ["glowing", "magnetic", "sharp", "bouncy"],
+  "description": "detailed description"
+}`
+                            },
+                            {
+                                role: "user",
+                                content: description
+                            }
+                        ],
+                        json: true
+                    });
+                    
+                    const itemSpec = JSON.parse(completion.content);
+                    this.createCraftedItem(itemSpec);
+                    
+                } catch (error) {
+                    console.error('Failed to craft item:', error);
+                }
+            }
+            
+            createCraftedItem(spec) {
+                let mesh;
+                const position = new THREE.Vector3(
+                    (Math.random() - 0.5) * 4,
+                    3,
+                    (Math.random() - 0.5) * 4
+                );
+                
+                // Create geometry based on spec
+                switch (spec.geometry) {
+                    case 'sphere':
+                        mesh = this.createSphere(position, spec.color, spec.size.width * 0.5);
+                        break;
+                    case 'cylinder':
+                        const cylinderGeometry = new THREE.CylinderGeometry(
+                            spec.size.width * 0.5, 
+                            spec.size.width * 0.5, 
+                            spec.size.height, 
+                            8
+                        );
+                        const cylinderMaterial = new THREE.MeshLambertMaterial({ color: spec.color });
+                        mesh = new THREE.Mesh(cylinderGeometry, cylinderMaterial);
+                        mesh.position.copy(position);
+                        this.scene.add(mesh);
+                        break;
+                    default:
+                        mesh = this.createCube(position, spec.color, spec.size.width);
+                        break;
+                }
+                
+                // Apply special properties
+                if (spec.special_properties.includes('glowing')) {
+                    mesh.material.emissive = new THREE.Color(spec.color);
+                    mesh.material.emissiveIntensity = 0.2;
+                }
+                
+                mesh.userData.crafted = true;
+                mesh.userData.spec = spec;
+                mesh.userData.id = 'crafted_' + Date.now();
+                
+                // Save to world state
+                this.room.updateRoomState({
+                    crafted_items: {
+                        [mesh.userData.id]: {
+                            spec: spec,
+                            position: position.toArray(),
+                            created_by: this.room.clientId
+                        }
+                    }
+                });
+            }
+            
+            saveObjectState(object) {
+                if (object.userData.id) {
+                    this.room.updateRoomState({
+                        object_positions: {
+                            [object.userData.id]: {
+                                position: object.position.toArray(),
+                                rotation: object.quaternion.toArray(),
+                                updated_by: this.room.clientId
+                            }
+                        }
+                    });
+                }
+            }
+            
+            syncWorldState(roomState) {
+                // Sync crafted items
+                if (roomState.crafted_items) {
+                    for (const [id, itemData] of Object.entries(roomState.crafted_items)) {
+                        if (!this.worldObjects.has(id)) {
+                            this.createCraftedItemFromData(id, itemData);
+                        }
+                    }
+                }
+                
+                // Sync object positions
+                if (roomState.object_positions) {
+                    for (const [id, posData] of Object.entries(roomState.object_positions)) {
+                        const obj = this.worldObjects.get(id);
+                        if (obj && posData.updated_by !== this.room.clientId) {
+                            obj.position.fromArray(posData.position);
+                            if (posData.rotation) {
+                                obj.quaternion.fromArray(posData.rotation);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            createCraftedItemFromData(id, itemData) {
+                const position = new THREE.Vector3().fromArray(itemData.position);
+                let mesh;
+                
+                switch (itemData.spec.geometry) {
+                    case 'sphere':
+                        mesh = this.createSphere(position, itemData.spec.color, itemData.spec.size.width * 0.5);
+                        break;
+                    default:
+                        mesh = this.createCube(position, itemData.spec.color, itemData.spec.size.width);
+                        break;
+                }
+                
+                mesh.userData.id = id;
+                mesh.userData.spec = itemData.spec;
+                this.worldObjects.set(id, mesh);
+            }
+            
+            syncPlayers(presence) {
+                // Update player avatars and states
+                for (const [clientId, playerData] of Object.entries(presence)) {
+                    if (clientId !== this.room.clientId) {
+                        this.updateRemotePlayer(clientId, playerData);
+                    }
+                }
+            }
+            
+            updateRemotePlayer(clientId, playerData) {
+                // This would create/update remote player representations
+                // For now, just log the data
+                console.log(`Player ${clientId}:`, playerData);
+            }
+            
+            updatePlayerCount() {
+                const count = Object.keys(this.room.peers || {}).length;
+                document.getElementById('player-count').textContent = count;
+            }
+            
+            loadWorldState() {
+                // Load persistent world data from database
+                // This would fetch saved world chunks and objects
+            }
+            
+            animate() {
+                this.renderer.setAnimationLoop(() => {
+                    // Update physics
+                    this.world.step(1/60);
+                    
+                    // Sync physics bodies with meshes
+                    this.scene.traverse((child) => {
+                        if (child.userData.body) {
+                            child.position.copy(child.userData.body.position);
+                            child.quaternion.copy(child.userData.body.quaternion);
+                        }
+                    });
+                    
+                    // Update player presence with head position
+                    if (this.renderer.xr.isPresenting) {
+                        const camera = this.renderer.xr.getCamera();
+                        this.room.updatePresence({
+                            head_position: camera.position.toArray(),
+                            head_rotation: camera.quaternion.toArray(),
+                            in_vr: true
+                        });
+                    }
+                    
+                    this.renderer.render(this.scene, this.camera);
+                });
+            }
+        }
+        
+        // Initialize the game
+        const game = new VRPhysicsGame();
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            if (game.camera && game.renderer) {
+                game.camera.aspect = window.innerWidth / window.innerHeight;
+                game.camera.updateProjectionMatrix();
+                game.renderer.setSize(window.innerWidth, window.innerHeight);
+            }
+        });
+        
+    </script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+</html>
+
