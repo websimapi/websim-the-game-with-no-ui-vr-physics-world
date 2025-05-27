@@ -19,12 +19,13 @@ export class PhysicsManager {
     createGround(scene) {
         const groundGeometry = new THREE.PlaneGeometry(50, 50);
         const groundMaterial = new THREE.MeshLambertMaterial({ 
-            color: 0x336633,
-            transparent: true,
-            opacity: 0.8
+            color: 0x4a7c4a, // Darker green, more visible
+            transparent: false, // Remove transparency
+            side: THREE.DoubleSide
         });
         const ground = new THREE.Mesh(groundGeometry, groundMaterial);
         ground.rotation.x = -Math.PI / 2;
+        ground.position.y = 0; // Ensure it's at ground level
         ground.receiveShadow = true;
         scene.add(ground);
         
@@ -38,15 +39,18 @@ export class PhysicsManager {
     
     createCube(scene, position, color, size = 1) {
         const geometry = new THREE.BoxGeometry(size, size, size);
-        const material = new THREE.MeshLambertMaterial({ color });
+        const material = new THREE.MeshLambertMaterial({ 
+            color,
+            transparent: false // Ensure full opacity
+        });
         const mesh = new THREE.Mesh(geometry, material);
         mesh.position.copy(position);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
         scene.add(mesh);
         
-        // Physics
-        const shape = new CANNON.Sphere(size * 0.5);
+        // Physics - fix to use box shape instead of sphere
+        const shape = new CANNON.Box(new CANNON.Vec3(size * 0.5, size * 0.5, size * 0.5));
         const body = new CANNON.Body({ mass: size });
         body.addShape(shape);
         body.position.set(position.x, position.y, position.z);
@@ -58,7 +62,10 @@ export class PhysicsManager {
     
     createSphere(scene, position, color, radius = 0.5) {
         const geometry = new THREE.SphereGeometry(radius, 16, 12);
-        const material = new THREE.MeshLambertMaterial({ color });
+        const material = new THREE.MeshLambertMaterial({ 
+            color,
+            transparent: false // Ensure full opacity
+        });
         const mesh = new THREE.Mesh(geometry, material);
         mesh.position.copy(position);
         mesh.castShadow = true;

@@ -46,21 +46,25 @@ export class VRPhysicsGame {
     
     setupScene() {
         this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0x505050);
+        this.scene.background = new THREE.Color(0x87CEEB); // Sky blue instead of gray
         
         this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         this.camera.position.set(0, 1.6, 3);
         
-        // Lighting
-        const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+        // Lighting - increased intensity
+        const ambientLight = new THREE.AmbientLight(0x404040, 1.2); // Increased from 0.6
         this.scene.add(ambientLight);
         
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5); // Increased from 0.8
         directionalLight.position.set(10, 10, 5);
         directionalLight.castShadow = true;
         directionalLight.shadow.mapSize.width = 2048;
         directionalLight.shadow.mapSize.height = 2048;
         this.scene.add(directionalLight);
+        
+        // Add additional light for better visibility
+        const hemisphereLight = new THREE.HemisphereLight(0x87CEEB, 0x336633, 0.8);
+        this.scene.add(hemisphereLight);
         
         // Ground
         this.physics.createGround(this.scene);
@@ -74,7 +78,8 @@ export class VRPhysicsGame {
         this.physics.createSphere(this.scene, new THREE.Vector3(-2, 2, 0), 0x00ff00, 0.5);
         this.physics.createCube(this.scene, new THREE.Vector3(0, 2, -2), 0x0000ff, 0.8);
         
-        this.crafting.createAnvil(this.scene, new THREE.Vector3(0, 1, -5));
+        // Fix anvil creation - remove scene parameter
+        this.crafting.createAnvil(new THREE.Vector3(0, 1, -5));
     }
     
     setupControls() {
