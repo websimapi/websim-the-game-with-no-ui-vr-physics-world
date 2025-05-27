@@ -115,8 +115,8 @@ export class MultiplayerManager {
     }
     
     updatePlayerCount() {
-        const count = Object.keys(this.room.peers || {}).length;
-        document.getElementById('player-count').textContent = count;
+        // Remove UI update - no interface in VR game
+        console.log(`Players online: ${Object.keys(this.room.peers || {}).length}`);
     }
     
     updatePresence(renderer, camera) {

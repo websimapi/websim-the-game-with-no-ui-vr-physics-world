@@ -78,11 +78,8 @@ export class VRPhysicsGame {
     }
     
     setupControls() {
-        document.addEventListener('keydown', (event) => {
-            if (event.key === 'c' || event.key === 'C') {
-                this.crafting.showModal();
-            }
-        });
+        // Remove crafting modal key binding - VR only interactions
+        // VR crafting will be handled through anvil interaction
     }
     
     loadWorldState() {

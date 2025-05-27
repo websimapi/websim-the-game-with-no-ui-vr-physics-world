@@ -7,30 +7,23 @@ export class CraftingManager {
     }
     
     setupEventListeners() {
-        document.getElementById('craft-button').addEventListener('click', () => {
-            this.craftItem();
-        });
-        
-        document.getElementById('cancel-button').addEventListener('click', () => {
-            this.hideModal();
-        });
+        // Remove modal event listeners - VR only interactions
     }
     
     showModal() {
-        document.getElementById('crafting-modal').style.display = 'block';
-        document.getElementById('crafting-input').focus();
+        // VR crafting through anvil interaction only
+        console.log('Crafting interface activated via VR');
     }
     
     hideModal() {
-        document.getElementById('crafting-modal').style.display = 'none';
-        document.getElementById('crafting-input').value = '';
+        // No modal in VR mode
     }
     
     async craftItem() {
-        const description = document.getElementById('crafting-input').value.trim();
-        if (!description) return;
+        // Direct crafting without modal input
+        const description = "basic sword"; // Default item for VR interaction
         
-        this.hideModal();
+        if (!description) return;
         
         try {
             // Generate item design using AI
